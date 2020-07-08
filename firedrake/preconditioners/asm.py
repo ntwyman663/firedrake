@@ -6,7 +6,7 @@ from firedrake.petsc import PETSc
 from firedrake.dmhooks import get_function_space
 import numpy
 
-__all__ = ("ASMPatchPC", "ASMLinesmoothPC")
+__all__ = ("ASMPatchPC", "ASMStarPC", "ASMLinesmoothPC")
 
 
 class ASMPatchPC(PCBase):
@@ -36,7 +36,7 @@ class ASMPatchPC(PCBase):
         # Create new PC object as ASM type and set index sets for patches
         asmpc = PETSc.PC().create(comm=pc.comm)
         asmpc.incrementTabLevel(1, parent=pc)
-        asmpc.setOptionsPrefix(self.prefix + "_sub")
+        asmpc.setOptionsPrefix(self.prefix + "sub_")
         asmpc.setOperators(*pc.getOperators())
         asmpc.setType(asmpc.Type.ASM)
         asmpc.setASMLocalSubdomains(len(ises), ises)
@@ -53,8 +53,8 @@ class ASMPatchPC(PCBase):
         '''
         pass
 
-    def view(self, pc):
-        self.ampc.view()
+    def view(self, pc, viewer=None):
+        self.asmpc.view(viewer=viewer)
 
     def update(self, pc):
         self.asmpc.setUp()
@@ -64,6 +64,89 @@ class ASMPatchPC(PCBase):
 
     def applyTranspose(self, pc, x, y):
         self.asmpc.applyTranspose(x, y)
+
+
+class ASMStarPC(ASMPatchPC):
+    '''Patch-based PC using Star of mesh entities implmented as an
+    :class:`ASMPatchPC`.
+
+    ASMStarPC is an additive Schwarz preconditioner where each patch
+    consists of all DoFs on the topological star of the mesh entity
+    specified by `pc_star_construct_dim`.
+    '''
+
+    _prefix = "pc_star_"
+
+    # Want to override some PETSc default options, so duplicate this
+    def initialize(self, pc):
+        # Get context from pc
+        _, P = pc.getOperators()
+        dm = pc.getDM()
+        self.prefix = pc.getOptionsPrefix() + self._prefix
+
+        # Extract function space and mesh to obtain plex and indexing functions
+        V = get_function_space(dm)
+
+        # Obtain patches from user defined funtion
+        ises = self.get_patches(V)
+
+        # Create new PC object as ASM type and set index sets for patches
+        asmpc = PETSc.PC().create(comm=pc.comm)
+        asmpc.incrementTabLevel(1, parent=pc)
+        asmpc.setOptionsPrefix(self.prefix + "sub_")
+        asmpc.setOperators(*pc.getOperators())
+        asmpc.setType(asmpc.Type.ASM)
+        asmpc.setASMLocalSubdomains(len(ises), ises)
+
+        # Set default solver parameters
+        opts = PETSc.Options(asmpc.getOptionsPrefix())
+        if "pc_asm_type" not in opts:
+            opts["pc_asm_type"] = "basic"
+        if "sub_pc_type" not in opts:
+            opts["sub_pc_type"] = "lu"
+        if "sub_pc_factor_shift_type" not in opts:
+            opts["sub_pc_factor_shift_type"] = "nonzero"
+
+        asmpc.setFromOptions()
+        self.asmpc = asmpc
+
+    def get_patches(self, V):
+        mesh = V._mesh
+        mesh_dm = mesh._topology_dm
+        lgmap = V.dof_dset.lgmap
+
+        # Obtain the topological entities to use to construct the stars
+        depth = PETSc.Options().getInt(self.prefix+"construct_dim", default=0)
+
+        # Build index sets for the patches
+        ises = []
+        (start, end) = mesh_dm.getDepthStratum(depth)
+        for seed in range(start, end):
+            # Only build patches over owned DoFs
+            if mesh_dm.getLabelValue("pyop2_ghost", seed) != -1:
+                continue
+
+            # Create point list from mesh DM
+            pt_array, _ = mesh_dm.getTransitiveClosure(seed, useCone=False)
+
+            # Get DoF indices for patch
+            indices = []
+            for (i, W) in enumerate(V):
+                section = W.dm.getDefaultSection()
+                for p in pt_array.tolist():
+                    dof = section.getDof(p)
+                    if dof <= 0:
+                        continue
+                    off = section.getOffset(p)
+                    # Local indices within W
+                    W_indices = numpy.arange(off*W.value_size, W.value_size * (off + dof), dtype='int32')
+                    indices.extend(V.dof_dset.local_ises[i].indices[W_indices])
+            # Map local indices into global indices and create the IS for PCASM
+            global_indices = lgmap.apply(indices)
+            iset = PETSc.IS().createGeneral(global_indices, comm=COMM_SELF)
+            ises.append(iset)
+
+        return ises
 
 
 class ASMLinesmoothPC(ASMPatchPC):
