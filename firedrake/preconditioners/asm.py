@@ -118,6 +118,12 @@ class ASMStarPC(ASMPatchPC):
         # Obtain the topological entities to use to construct the stars
         depth = PETSc.Options().getInt(self.prefix+"construct_dim", default=0)
 
+        # Accessing .indices causes the allocation of a global array,
+        # so we need to cache these for efficiency
+        V_local_ises_indices = []
+        for (i, W) in enumerate(V):
+            V_local_ises_indices.append(V.dof_dset.local_ises[i].indices)
+
         # Build index sets for the patches
         ises = []
         (start, end) = mesh_dm.getDepthStratum(depth)
@@ -140,7 +146,7 @@ class ASMStarPC(ASMPatchPC):
                     off = section.getOffset(p)
                     # Local indices within W
                     W_indices = numpy.arange(off*W.value_size, W.value_size * (off + dof), dtype='int32')
-                    indices.extend(V.dof_dset.local_ises[i].indices[W_indices])
+                    indices.extend(V_local_ises_indices[i][W_indices])
             # Map local indices into global indices and create the IS for PCASM
             global_indices = lgmap.apply(indices)
             iset = PETSc.IS().createGeneral(global_indices, comm=COMM_SELF)
