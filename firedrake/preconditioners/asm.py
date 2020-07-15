@@ -29,18 +29,41 @@ class ASMPatchPC(PCBase):
 
         # Extract function space and mesh to obtain plex and indexing functions
         V = get_function_space(dm)
-
         # Obtain patches from user defined funtion
         ises = self.get_patches(V)
 
-        # Create new PC object as ASM type and set index sets for patches
-        asmpc = PETSc.PC().create(comm=pc.comm)
-        asmpc.incrementTabLevel(1, parent=pc)
-        asmpc.setOptionsPrefix(self.prefix + "sub_")
-        asmpc.setOperators(*pc.getOperators())
-        asmpc.setType(asmpc.Type.ASM)
-        asmpc.setASMLocalSubdomains(len(ises), ises)
-        asmpc.setFromOptions()
+        # Either use PETSc's ASM PC or use TinyASM (a simple ASM implementation
+        # that is designed to be fast for small block sizes)
+        backend = PETSc.Options().getString(self.prefix+"backend", default='petscasm').lower()
+        if backend == 'petscasm':
+            # Create new PC object as ASM type and set index sets for patches
+            asmpc = PETSc.PC().create(comm=pc.comm)
+            asmpc.incrementTabLevel(1, parent=pc)
+            asmpc.setOptionsPrefix(self.prefix + "sub_")
+            asmpc.setOperators(*pc.getOperators())
+            asmpc.setType(asmpc.Type.ASM)
+            lgmap = V.dof_dset.lgmap
+            asmpc.setASMLocalSubdomains(len(ises), [lgmap.applyIS(i) for i in ises])
+            asmpc.setFromOptions()
+        elif backend == 'tinyasm':
+            print('use tinyasm')
+            asmpc = PETSc.PC().create(comm=pc.comm)
+            asmpc.incrementTabLevel(1, parent=pc)
+            asmpc.setOptionsPrefix(self.prefix + "sub_")
+            asmpc.setOperators(*pc.getOperators())
+            try:
+                from tinyasm import _tinyasm as tasm
+            except ImportError:
+                raise ImportError("To use the TinyASM backend, you must install firedrake with TinySM (firedrake-update --tinyasm).")
+            asmpc.setType("tinyasm")
+            tasm.SetASMLocalSubdomains(
+                asmpc, ises,
+                [W.dm.getDefaultSF() for W in V],
+                [W.value_size for W in V],
+                sum(W.value_size*W.dm.getDefaultSection().getStorageSize() for W in V))
+            asmpc.setFromOptions()
+            asmpc.setUp()
+
         self.asmpc = asmpc
 
     @abc.abstractmethod
@@ -49,7 +72,7 @@ class ASMPatchPC(PCBase):
 
         :param  V: the :class:`~.FunctionSpace`.
 
-        returns a list of index sets defining the ASM patches.
+        returns a list of index sets defining the ASM patches in local numbering.
         '''
         pass
 
@@ -88,32 +111,56 @@ class ASMStarPC(ASMPatchPC):
         V = get_function_space(dm)
 
         # Obtain patches from user defined funtion
+
+        # Either use PETSc's ASM PC or use TinyASM (a simple ASM implementation
+        # that is designed to be fast for small block sizes)
+        backend = PETSc.Options().getString(self.prefix+"backend", default='petscasm').lower()
+
         ises = self.get_patches(V)
 
-        # Create new PC object as ASM type and set index sets for patches
-        asmpc = PETSc.PC().create(comm=pc.comm)
-        asmpc.incrementTabLevel(1, parent=pc)
-        asmpc.setOptionsPrefix(self.prefix + "sub_")
-        asmpc.setOperators(*pc.getOperators())
-        asmpc.setType(asmpc.Type.ASM)
-        asmpc.setASMLocalSubdomains(len(ises), ises)
+        if backend == 'petscasm':
+            # Create new PC object as ASM type and set index sets for patches
+            asmpc = PETSc.PC().create(comm=pc.comm)
+            asmpc.incrementTabLevel(1, parent=pc)
+            asmpc.setOptionsPrefix(self.prefix + "sub_")
+            asmpc.setOperators(*pc.getOperators())
+            asmpc.setType(asmpc.Type.ASM)
+            lgmap = V.dof_dset.lgmap
+            asmpc.setASMLocalSubdomains(len(ises), [lgmap.applyIS(i) for i in ises])
 
-        # Set default solver parameters
-        opts = PETSc.Options(asmpc.getOptionsPrefix())
-        if "pc_asm_type" not in opts:
-            opts["pc_asm_type"] = "basic"
-        if "sub_pc_type" not in opts:
-            opts["sub_pc_type"] = "lu"
-        if "sub_pc_factor_shift_type" not in opts:
-            opts["sub_pc_factor_shift_type"] = "nonzero"
+            # Set default solver parameters
+            opts = PETSc.Options(asmpc.getOptionsPrefix())
+            if "pc_asm_type" not in opts:
+                opts["pc_asm_type"] = "basic"
+            if "sub_pc_type" not in opts:
+                opts["sub_pc_type"] = "lu"
+            if "sub_pc_factor_shift_type" not in opts:
+                opts["sub_pc_factor_shift_type"] = "nonzero"
 
-        asmpc.setFromOptions()
+            asmpc.setFromOptions()
+        elif backend == 'tinyasm':
+            asmpc = PETSc.PC().create(comm=pc.comm)
+            asmpc.incrementTabLevel(1, parent=pc)
+            asmpc.setOptionsPrefix(self.prefix + "sub_")
+            asmpc.setOperators(*pc.getOperators())
+            try:
+                from tinyasm import _tinyasm as tasm
+            except ImportError:
+                raise ImportError("To use the TinyASM backend, you must install firedrake with TinySM (firedrake-update --tinyasm).")
+            asmpc.setType("tinyasm")
+            tasm.SetASMLocalSubdomains(
+                asmpc, ises,
+                [W.dm.getDefaultSF() for W in V],
+                [W.value_size for W in V],
+                sum(W.value_size*W.dm.getDefaultSection().getStorageSize() for W in V))
+            asmpc.setFromOptions()
+            asmpc.setUp()
+
         self.asmpc = asmpc
 
     def get_patches(self, V):
         mesh = V._mesh
         mesh_dm = mesh._topology_dm
-        lgmap = V.dof_dset.lgmap
 
         # Obtain the topological entities to use to construct the stars
         depth = PETSc.Options().getInt(self.prefix+"construct_dim", default=0)
@@ -147,9 +194,7 @@ class ASMStarPC(ASMPatchPC):
                     # Local indices within W
                     W_indices = numpy.arange(off*W.value_size, W.value_size * (off + dof), dtype='int32')
                     indices.extend(V_local_ises_indices[i][W_indices])
-            # Map local indices into global indices and create the IS for PCASM
-            global_indices = lgmap.apply(indices)
-            iset = PETSc.IS().createGeneral(global_indices, comm=COMM_SELF)
+            iset = PETSc.IS().createGeneral(indices, comm=COMM_SELF)
             ises.append(iset)
 
         return ises
@@ -181,7 +226,6 @@ class ASMLinesmoothPC(ASMPatchPC):
         assert mesh.cell_set._extruded
         dm = mesh._topology_dm
         section = V.dm.getDefaultSection()
-        lgmap = V.dof_dset.lgmap
 
         # Obtain the codimensions to loop over from options, if present
         codim_list = PETSc.Options().getString(self.prefix+"codims", "0, 1")
@@ -199,9 +243,7 @@ class ASMLinesmoothPC(ASMPatchPC):
                     continue
                 off = section.getOffset(p)
                 indices = numpy.arange(off*V.value_size, V.value_size * (off + dof), dtype='int32')
-                # Map local indices into global indices and create the IS for PCASM
-                global_indices = lgmap.apply(indices)
-                iset = PETSc.IS().createGeneral(global_indices, comm=COMM_SELF)
+                iset = PETSc.IS().createGeneral(indices, comm=COMM_SELF)
                 ises.append(iset)
 
         return ises
