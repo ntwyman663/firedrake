@@ -37,11 +37,18 @@ def expected(mesh_type):
     elif mesh_type == "Quad":
         return [9, 20]
 
+
 @pytest.fixture(params=["petscasm", "tinyasm"])
 def backend(request):
     return request.param
 
+
 def test_linesmoother(mesh, S1family, expected, backend):
+    if backend == "tinyasm":
+        try:
+            from tinyasm import _tinyasm as tasm
+        except ImportError:
+            return
 
     nits = []
     for degree in range(2):
