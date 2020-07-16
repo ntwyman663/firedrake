@@ -46,7 +46,7 @@ def backend(request):
 def test_linesmoother(mesh, S1family, expected, backend):
     if backend == "tinyasm":
         try:
-            from tinyasm import _tinyasm as tasm
+            from tinyasm import _tinyasm as tasm  # noqa
         except ImportError:
             return
 
