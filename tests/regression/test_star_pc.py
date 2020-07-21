@@ -162,7 +162,7 @@ def test_star_equivalence(problem_type):
     star_its = star_solver.snes.getLinearSolveIterations()
 
     try:
-        from tinyasm import _tinyasm as tasm  # noqa
+        from tinyasm import _tinyasm as tasm  # noqa: F401
         have_tinyasm = True
     except ImportError:
         have_tinyasm = False
