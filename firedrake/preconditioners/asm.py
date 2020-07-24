@@ -107,7 +107,6 @@ class ASMStarPC(ASMPatchPC):
 
         # Obtain patches from user defined funtion
 
-
         ises = self.get_patches(V)
 
         asmpc = PETSc.PC().create(comm=pc.comm)

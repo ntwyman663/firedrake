@@ -38,18 +38,19 @@ def expected(mesh_type):
         return [9, 20]
 
 
-@pytest.fixture(params=["petscasm", "tinyasm"])
+try:
+    import tinyasm  # noqa: F401
+    marks = None
+except ImportError:
+    marks = pytest.mark.skip(reason="No tinyasm")
+
+
+@pytest.fixture(params=["petscasm", pytest.param("tinyasm", marks=marks)])
 def backend(request):
     return request.param
 
 
 def test_linesmoother(mesh, S1family, expected, backend):
-    if backend == "tinyasm":
-        try:
-            from tinyasm import _tinyasm as tasm  # noqa: F401
-        except ImportError:
-            return
-
     nits = []
     for degree in range(2):
         S1 = FiniteElement(S1family, mesh._base_mesh.ufl_cell(), degree+1)
