@@ -32,25 +32,20 @@ class ASMPatchPC(PCBase):
         # Obtain patches from user defined funtion
         ises = self.get_patches(V)
 
+        asmpc = PETSc.PC().create(comm=pc.comm)
+        asmpc.incrementTabLevel(1, parent=pc)
+        asmpc.setOptionsPrefix(self.prefix + "sub_")
+        asmpc.setOperators(*pc.getOperators())
         # Either use PETSc's ASM PC or use TinyASM (a simple ASM implementation
         # that is designed to be fast for small block sizes)
         backend = PETSc.Options().getString(self.prefix+"backend", default='petscasm').lower()
         if backend == 'petscasm':
             # Create new PC object as ASM type and set index sets for patches
-            asmpc = PETSc.PC().create(comm=pc.comm)
-            asmpc.incrementTabLevel(1, parent=pc)
-            asmpc.setOptionsPrefix(self.prefix + "sub_")
-            asmpc.setOperators(*pc.getOperators())
             asmpc.setType(asmpc.Type.ASM)
             lgmap = V.dof_dset.lgmap
             asmpc.setASMLocalSubdomains(len(ises), [lgmap.applyIS(i) for i in ises])
             asmpc.setFromOptions()
         elif backend == 'tinyasm':
-            print('use tinyasm')
-            asmpc = PETSc.PC().create(comm=pc.comm)
-            asmpc.incrementTabLevel(1, parent=pc)
-            asmpc.setOptionsPrefix(self.prefix + "sub_")
-            asmpc.setOperators(*pc.getOperators())
             try:
                 from tinyasm import _tinyasm as tasm
             except ImportError:
@@ -112,18 +107,19 @@ class ASMStarPC(ASMPatchPC):
 
         # Obtain patches from user defined funtion
 
-        # Either use PETSc's ASM PC or use TinyASM (a simple ASM implementation
-        # that is designed to be fast for small block sizes)
-        backend = PETSc.Options().getString(self.prefix+"backend", default='petscasm').lower()
 
         ises = self.get_patches(V)
 
+        asmpc = PETSc.PC().create(comm=pc.comm)
+        asmpc.incrementTabLevel(1, parent=pc)
+        asmpc.setOptionsPrefix(self.prefix + "sub_")
+        asmpc.setOperators(*pc.getOperators())
+
+        # Either use PETSc's ASM PC or use TinyASM (a simple ASM implementation
+        # that is designed to be fast for small block sizes)
+        backend = PETSc.Options().getString(self.prefix+"backend", default='petscasm').lower()
         if backend == 'petscasm':
             # Create new PC object as ASM type and set index sets for patches
-            asmpc = PETSc.PC().create(comm=pc.comm)
-            asmpc.incrementTabLevel(1, parent=pc)
-            asmpc.setOptionsPrefix(self.prefix + "sub_")
-            asmpc.setOperators(*pc.getOperators())
             asmpc.setType(asmpc.Type.ASM)
             lgmap = V.dof_dset.lgmap
             asmpc.setASMLocalSubdomains(len(ises), [lgmap.applyIS(i) for i in ises])
@@ -139,10 +135,6 @@ class ASMStarPC(ASMPatchPC):
 
             asmpc.setFromOptions()
         elif backend == 'tinyasm':
-            asmpc = PETSc.PC().create(comm=pc.comm)
-            asmpc.incrementTabLevel(1, parent=pc)
-            asmpc.setOptionsPrefix(self.prefix + "sub_")
-            asmpc.setOperators(*pc.getOperators())
             try:
                 from tinyasm import _tinyasm as tasm
             except ImportError:
