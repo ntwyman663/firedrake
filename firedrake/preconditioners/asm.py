@@ -40,6 +40,20 @@ class ASMPatchPC(PCBase):
         asmpc.setOperators(*pc.getOperators())
         asmpc.setType(asmpc.Type.ASM)
         asmpc.setASMLocalSubdomains(len(ises), ises)
+
+        # Set default solver parameters
+        asmpc.setASMType(PETSc.PC.ASMType.BASIC)
+        opts = PETSc.Options(asmpc.getOptionsPrefix())
+        if "sub_pc_type" not in opts:
+            opts["sub_pc_type"] = "lu"
+        if "sub_pc_factor_shift_type" not in opts:
+            opts["sub_pc_factor_shift_type"] = "nonzero"
+
+        # Try to do this programatically
+        # ksp = asmpc.getASMSubKSP()
+        # ksp.pc.setType(PETSc.PC.Type.LU)
+        # ksp.pc.setFactorShift(shift_type=PETSc.Mat.FactorShiftType.NONZERO)
+
         asmpc.setFromOptions()
         self.asmpc = asmpc
 
@@ -76,39 +90,6 @@ class ASMStarPC(ASMPatchPC):
     '''
 
     _prefix = "pc_star_"
-
-    # Want to override some PETSc default options, so duplicate this
-    def initialize(self, pc):
-        # Get context from pc
-        _, P = pc.getOperators()
-        dm = pc.getDM()
-        self.prefix = pc.getOptionsPrefix() + self._prefix
-
-        # Extract function space and mesh to obtain plex and indexing functions
-        V = get_function_space(dm)
-
-        # Obtain patches from user defined funtion
-        ises = self.get_patches(V)
-
-        # Create new PC object as ASM type and set index sets for patches
-        asmpc = PETSc.PC().create(comm=pc.comm)
-        asmpc.incrementTabLevel(1, parent=pc)
-        asmpc.setOptionsPrefix(self.prefix + "sub_")
-        asmpc.setOperators(*pc.getOperators())
-        asmpc.setType(asmpc.Type.ASM)
-        asmpc.setASMLocalSubdomains(len(ises), ises)
-
-        # Set default solver parameters
-        opts = PETSc.Options(asmpc.getOptionsPrefix())
-        if "pc_asm_type" not in opts:
-            opts["pc_asm_type"] = "basic"
-        if "sub_pc_type" not in opts:
-            opts["sub_pc_type"] = "lu"
-        if "sub_pc_factor_shift_type" not in opts:
-            opts["sub_pc_factor_shift_type"] = "nonzero"
-
-        asmpc.setFromOptions()
-        self.asmpc = asmpc
 
     def get_patches(self, V):
         mesh = V._mesh
