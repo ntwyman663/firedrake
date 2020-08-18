@@ -243,10 +243,39 @@ def _interpolator(V, tensor, expr, subset, arguments, access):
 
     mesh = V.ufl_domain()
     coords = mesh.coordinates
+    trans_mesh_allowed = False
+
+    if isinstance(mesh.topology, firedrake.mesh.VertexOnlyMeshTopology):
+        if mesh.geometric_dimension() != expr.ufl_domain().geometric_dimension():
+            raise ValueError("Cannot interpolate onto a VertexOnlyMesh of a different geometric dimension")
+        # Create a quadrature element for a point with one weight to
+        # represent the point we interpolate onto. This uses the default
+        # quadrature rule for a vertex cell (empty tuple 0d PointSet and
+        # [1] weight). NOTE: Not sure this code should live here
+        from finat.quadrature_element import QuadratureElement
+        from finat.quadrature import make_quadrature
+        # TODO: Implement the actual QuadratureElement dual_basis
+        class VertexInterpolationElement(QuadratureElement):
+            def __init__(self, *args, **kwargs):
+                # Current element dual basis is desired dual basis for
+                # this pseudoelement.
+                self._dual_basis = element.dual_basis
+                super().__init__(*args, **kwargs)
+            @property
+            def dual_basis(self):
+                return self._dual_basis
+        element = VertexInterpolationElement(element.cell, 0)
+        # # Commmented out below is an alternative, with 1 point and 1 weight.
+        # # Note this it requires FInAT commit 9bdb828770def405f446945b1afd1c0794ae5a50
+        # from finat.quadrature_element import QuadratureElement
+        # from finat.quadrature import QuadratureRule
+        # from finat.point_set import PointSingleton
+        # element = QuadratureElement(element.cell, None, rule=QuadratureRule(PointSingleton([1.]), weights=[1.]))
+        trans_mesh_allowed = True
 
     if not isinstance(expr, firedrake.Expression):
-        if expr.ufl_domain() and expr.ufl_domain() != V.mesh():
-            raise NotImplementedError("Interpolation onto another mesh not supported.")
+        if expr.ufl_domain() and expr.ufl_domain() != V.mesh() and not trans_mesh_allowed:
+            raise NotImplementedError("Interpolation onto the target mesh not supported.")
         ast, oriented, needs_cell_sizes, coefficients, _ = compile_expression_dual_evaluation(expr, element, coords, coffee=False)
         kernel = op2.Kernel(ast, ast.name)
     elif hasattr(expr, "eval"):
@@ -300,8 +329,8 @@ def _interpolator(V, tensor, expr, subset, arguments, access):
 
     for o in coefficients:
         domain = o.ufl_domain()
-        if domain is not None and domain.topology != mesh.topology:
-            raise NotImplementedError("Interpolation onto another mesh not supported.")
+        if domain is not None and domain.topology != mesh.topology and not trans_mesh_allowed:
+            raise NotImplementedError("Interpolation onto the target mesh not supported.")
 
     parloop = op2.ParLoop(*parloop_args).compute
     if isinstance(tensor, op2.Mat):
