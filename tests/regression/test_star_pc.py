@@ -129,6 +129,7 @@ def test_star_equivalence(problem_type):
                        "mg_levels_pc_type": "python",
                        "mg_levels_pc_python_type": "firedrake.ASMStarPC",
                        "mg_levels_pc_star_construct_dim": 0,
+                       "mg_levels_pc_star_sub_sub_pc_factor_shift_type": "nonzero",
                        "mg_coarse_pc_type": "python",
                        "mg_coarse_pc_python_type": "firedrake.AssembledPC",
                        "mg_coarse_assembled_pc_type": "lu",
